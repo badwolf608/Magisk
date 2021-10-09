@@ -37,7 +37,9 @@ void setup_logfile(bool reset) {
 // Maximum message length for pipes to transfer atomically
 #define MAX_MSG_LEN  (PIPE_BUF - sizeof(log_meta))
 
-static void logfile_writer(int pipefd) {
+static void *logfile_writer(void *arg) {
+    int pipefd = (int) arg;
+
     run_finally close_pipes([=] {
         // Close up all logging pipes when thread dies
         close(pipefd);
@@ -62,7 +64,7 @@ static void logfile_writer(int pipefd) {
     for (;;) {
         // Read meta data
         if (read(pipefd, &meta, sizeof(meta)) != sizeof(meta))
-            return;
+            return nullptr;
 
         if (meta.prio < 0) {
             if (!switched) {
@@ -75,7 +77,7 @@ static void logfile_writer(int pipefd) {
                 rename(LOGFILE, LOGFILE ".bak");
                 int fd = open(LOGFILE, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
                 if (fd < 0)
-                    return;
+                    return nullptr;
                 if (tmp.data)
                     write(fd, tmp.data, tmp.len);
 
@@ -186,6 +188,6 @@ void start_log_daemon() {
     int fds[2];
     if (pipe2(fds, O_CLOEXEC) == 0) {
         logd_fd = fds[1];
-        exec_task([fd = fds[0]] { logfile_writer(fd); });
+        new_daemon_thread(logfile_writer, (void *) fds[0]);
     }
 }
